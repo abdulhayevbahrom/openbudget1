@@ -6,13 +6,13 @@ function setUserBot(bot) {
 
 async function sendToUser(userId, text, extra) {
   if (!userBot) {
-    console.error('❌ User bot o\'rnatilmagan (userNotifier).');
+    console.error("❌ User bot o'rnatilmagan (userNotifier).");
     return;
   }
   try {
     await userBot.telegram.sendMessage(Number(userId), text, extra);
   } catch (e) {
-    console.error(`User ${userId} ga xabar yuborib bo'lmadi:`, e.message);
+    // console.error(`User ${userId} ga xabar yuborib bo'lmadi:`, e.message);
   }
 }
 

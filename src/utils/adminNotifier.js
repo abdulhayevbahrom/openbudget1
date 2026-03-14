@@ -88,7 +88,7 @@ async function sendToAdminsSelective(
     try {
       await adminBot.telegram.sendMessage(adminId, text, extra || undefined);
     } catch (e) {
-      console.error(`Admin ${adminId} ga xabar yuborib bo'lmadi:`, e.message);
+      // console.error(`Admin ${adminId} ga xabar yuborib bo'lmadi:`, e.message);
     }
   }
 }
