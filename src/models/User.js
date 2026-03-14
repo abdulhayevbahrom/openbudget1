@@ -11,6 +11,12 @@ const phoneSchema = new mongoose.Schema({
   addedAt: { type: Date, default: Date.now },
   confirmedAt: { type: Date },
   adminId: { type: String }, // qaysi admin jarayonga oldi
+  adminMessages: [
+    {
+      adminId: { type: Number },
+      messageId: { type: Number },
+    }
+  ],
 });
 
 const userSchema = new mongoose.Schema({
@@ -21,6 +27,16 @@ const userSchema = new mongoose.Schema({
   lastName: { type: String },
   phones: [phoneSchema],
   totalEarned: { type: Number, default: 0 },
+  totalPaid: { type: Number, default: 0 },
+  payoutPending: { type: Boolean, default: false },
+  payoutRequestedAt: { type: Date, default: null },
+  payoutCardDisplay: { type: String, default: null },
+  payoutAdminMessages: [
+    {
+      adminId: { type: Number },
+      messageId: { type: Number },
+    }
+  ],
   createdAt: { type: Date, default: Date.now },
   state: { type: String, default: null }, // bot holati
   currentPhone: { type: String, default: null }, // SMS kod kutilayotgan raqam

@@ -3,7 +3,7 @@ const path = require('path');
 const User = require('../models/User');
 const Counter = require('../models/Counter');
 const { formatPhone, formatPhoneDisplay, formatCardDisplay, statusText, REWARD_PER_VOTE } = require('../utils/helpers');
-const { sendToAdmins } = require('../utils/adminNotifier');
+const { sendToAdmins, sendToAdminsSelective } = require('../utils/adminNotifier');
 
 const NEXT_PROMPT = `\n\n📱 Qo'shimcha raqam kiritish uchun raqamni yuboring.`;
 
@@ -143,7 +143,8 @@ async function textHandler(ctx) {
 
     const fullName = [user.firstName, user.lastName].filter(Boolean).join(' ');
 
-    await sendToAdmins(
+    const ownerAdminId = phoneEntry.adminId;
+    await sendToAdminsSelective(
       `🔢 <b>SMS KOD KELDI</b>\n\n` +
       `👤 Mijoz: ${fullName} (@${user.username || 'yo\'q'}) #${user.sequentialId}\n` +
       `📱 Raqam: <code>${phoneEntry.phone}</code>\n` +
@@ -157,7 +158,9 @@ async function textHandler(ctx) {
             Markup.button.callback('❌ Rad etildi', `reject_${user.userId}_${phoneEntry.phone}`),
           ]
         ])
-      }
+      },
+      ownerAdminId,
+      { parse_mode: 'HTML' }
     );
 
     user.state = 'waiting_result';
@@ -180,7 +183,8 @@ async function textHandler(ctx) {
     }
 
     const confirmed = user.phones.filter(p => p.status === 'confirmed').length;
-    const balance = confirmed * REWARD_PER_VOTE;
+    const totalPaid = Number(user.totalPaid || 0);
+    const balance = Math.max(0, confirmed * REWARD_PER_VOTE - totalPaid);
 
     if (balance <= 0) {
       user.state = null;
@@ -190,20 +194,38 @@ async function textHandler(ctx) {
         NEXT_PROMPT
       );
     }
+    if (user.payoutPending) {
+      user.state = null;
+      await user.save();
+      return ctx.reply(
+        `⏳ Sizning oldingi pul yechish so'rovingiz hali yakunlanmagan.\n` +
+        `Iltimos, to'lov tasdiqlanishini kuting.` +
+        NEXT_PROMPT
+      );
+    }
 
     const fullName = [user.firstName, user.lastName].filter(Boolean).join(' ');
     const cardDisplay = formatCardDisplay(parsedCard.digits);
 
-    await sendToAdmins(
+    const sent = await sendToAdmins(
       `💳 <b>PUL YECHISH SO'ROVI</b>\n\n` +
       `👤 Mijoz: ${fullName} (@${user.username || 'yo\'q'}) #${user.sequentialId}\n` +
       `🆔 Telegram ID: <code>${user.userId}</code>\n` +
       `💰 Hisob: <b>${balance.toLocaleString()} so'm</b>\n` +
       `💳 Karta: <code>${cardDisplay}</code>`,
-      { parse_mode: 'HTML' }
+      {
+        parse_mode: 'HTML',
+        ...Markup.inlineKeyboard([
+          [Markup.button.callback('✅ To\'landi', `payout_paid_${user.userId}`)],
+        ])
+      }
     );
 
     user.state = null;
+    user.payoutPending = true;
+    user.payoutRequestedAt = new Date();
+    user.payoutCardDisplay = cardDisplay;
+    user.payoutAdminMessages = Array.isArray(sent) ? sent : [];
     await user.save();
 
     return ctx.reply(
@@ -289,7 +311,7 @@ async function processNewPhone(ctx, phone, displayPhone) {
   // Admin(lar)ga xabar
   const fullName = [user.firstName, user.lastName].filter(Boolean).join(' ');
 
-  await sendToAdmins(
+  const adminMessages = await sendToAdmins(
     `📲 <b>YANGI RAQAM — OVOZ UCHUN</b>\n\n` +
     `👤 Mijoz: ${fullName} (@${user.username || 'yo\'q'}) #${user.sequentialId}\n` +
     `📱 Raqam: <code>${displayPhone || phone}</code>\n` +
@@ -301,6 +323,11 @@ async function processNewPhone(ctx, phone, displayPhone) {
         [Markup.button.callback('⚠️ Avval ovoz berilgan', `already_voted_${user.userId}_${phone}`)],
       ])
     }
+  );
+
+  await User.updateOne(
+    { userId: ctx.from.id, 'phones.phone': phone },
+    { $set: { 'phones.$.adminMessages': Array.isArray(adminMessages) ? adminMessages : [] } }
   );
 
   return ctx.reply(
@@ -336,8 +363,10 @@ async function accountHandler(ctx) {
   }
 
   const confirmed = user.phones.filter(p => p.status === 'confirmed').length;
-  msg += `\n💰 <b>Jami: ${(confirmed * REWARD_PER_VOTE).toLocaleString()} so'm</b>`;
-  msg += `\n   (${confirmed} ta tasdiqlangan raqam × ${REWARD_PER_VOTE.toLocaleString()} so'm)`;
+  const totalPaid = Number(user.totalPaid || 0);
+  const balance = Math.max(0, confirmed * REWARD_PER_VOTE - totalPaid);
+  msg += `\n💰 <b>Jami: ${balance.toLocaleString()} so'm</b>`;
+  msg += `\n   (Tasdiqlangan raqamlar: ${confirmed} ta)`;
   msg += NEXT_PROMPT;
 
   await ctx.reply(msg, {

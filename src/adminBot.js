@@ -5,6 +5,7 @@ const {
   handleConfirm,
   handleReject,
   handleAlreadyVoted,
+  handlePayoutPaid,
   adminStats,
   adminPending,
 } = require('./handlers/adminHandler');
@@ -122,6 +123,7 @@ function createAdminBot(token) {
   bot.action(/^confirm_(\d+)_(.+)$/, handleConfirm);
   bot.action(/^reject_(\d+)_(.+)$/, handleReject);
   bot.action(/^already_voted_(\d+)_(.+)$/, handleAlreadyVoted);
+  bot.action(/^payout_paid_(\d+)$/, handlePayoutPaid);
 
   // ADMIN komandalar
   bot.command('stats', adminStats);
