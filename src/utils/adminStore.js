@@ -19,6 +19,24 @@ function getAdminIds() {
   return Array.from(adminIds);
 }
 
+async function upsertAdminProfile(tgUser) {
+  if (!tgUser || !Number.isFinite(Number(tgUser.id))) return false;
+  const userId = Number(tgUser.id);
+  await Admin.updateOne(
+    { userId },
+    {
+      $set: {
+        username: tgUser.username || null,
+        firstName: tgUser.first_name || tgUser.firstName || '',
+        lastName: tgUser.last_name || tgUser.lastName || '',
+      }
+    },
+    { upsert: true }
+  );
+  adminIds.add(userId);
+  return true;
+}
+
 async function addAdmin(tgUser, addedBy = null) {
   let rawId = tgUser && Object.prototype.hasOwnProperty.call(tgUser, 'userId')
     ? tgUser.userId
@@ -45,4 +63,4 @@ async function ensureFirstAdmin(tgUser) {
   return addAdmin(tgUser, null);
 }
 
-module.exports = { loadAdmins, isAdmin, getAdminIds, addAdmin, ensureFirstAdmin };
+module.exports = { loadAdmins, isAdmin, getAdminIds, addAdmin, ensureFirstAdmin, upsertAdminProfile };

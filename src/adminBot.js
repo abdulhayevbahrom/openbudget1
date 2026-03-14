@@ -8,22 +8,24 @@ const {
   adminStats,
   adminPending,
 } = require('./handlers/adminHandler');
-const { isAdmin, addAdmin, ensureFirstAdmin, loadAdmins } = require('./utils/adminStore');
+const { isAdmin, addAdmin, ensureFirstAdmin, loadAdmins, upsertAdminProfile } = require('./utils/adminStore');
 const User = require('./models/User');
 
-function normalizePhoneInput(input) {
-  const raw = String(input || '').trim();
-  const digits = raw.replace(/\D/g, '');
-  if (raw.startsWith('+998') && digits.length === 12 && digits.startsWith('998')) {
-    return '+' + digits;
+const pendingAddAdmin = new Set();
+
+async function resolveTargetUser(raw) {
+  let targetUser = null;
+  let fallbackUserId = null;
+
+  if (/^\d+$/.test(raw)) {
+    const numId = Number(raw);
+    if (Number.isFinite(numId)) {
+      fallbackUserId = numId;
+      targetUser = await User.findOne({ userId: numId });
+    }
+    return { targetUser, fallbackUserId };
   }
-  if (digits.length === 9) {
-    return '+998' + digits;
-  }
-  if (digits.length === 12 && digits.startsWith('998')) {
-    return '+' + digits;
-  }
-  return null;
+  return { targetUser, fallbackUserId };
 }
 
 function createAdminBot(token) {
@@ -32,6 +34,7 @@ function createAdminBot(token) {
   bot.start(async (ctx) => {
     await loadAdmins();
     if (isAdmin(ctx.from.id)) {
+      await upsertAdminProfile(ctx.from);
       return ctx.reply('🔧 Admin botga xush kelibsiz.', {
         parse_mode: 'HTML',
         ...Markup.keyboard([
@@ -61,49 +64,33 @@ function createAdminBot(token) {
   bot.hears('➕ Admin qo\'shish', async (ctx) => {
     await loadAdmins();
     if (!isAdmin(ctx.from.id)) return ctx.reply('❌ Ruxsat yo\'q');
+    pendingAddAdmin.add(ctx.from.id);
     return ctx.reply(
-      `➕ Admin qo'shish uchun username yoki raqam kiriting.`
+      `➕ Admin qo'shish uchun faqat chat ID yuboring.`
     );
   });
 
   bot.on('text', async (ctx) => {
     await loadAdmins();
     if (!isAdmin(ctx.from.id)) return;
+    if (!pendingAddAdmin.has(ctx.from.id)) return;
 
     const text = ctx.message.text.trim();
     if (text.startsWith('/')) return;
 
     const raw = text;
-    let targetUser = null;
+    const { targetUser, fallbackUserId } = await resolveTargetUser(raw);
 
-    if (raw.startsWith('@')) {
-      const username = raw.slice(1).toLowerCase();
-      targetUser = await User.findOne({ username: new RegExp(`^${username}$`, 'i') });
-    } else if (/^\d+$/.test(raw)) {
-      if (raw.length >= 9) {
-        const phone = normalizePhoneInput(raw);
-        if (phone) {
-          targetUser = await User.findOne({ 'phones.phone': phone });
-        }
-      } else {
-        const userId = Number(raw);
-        targetUser = await User.findOne({ userId });
-      }
-    } else {
-      const username = raw.toLowerCase();
-      targetUser = await User.findOne({ username: new RegExp(`^${username}$`, 'i') });
+    if (!Number.isFinite(fallbackUserId)) {
+      return ctx.reply('❌ Noto\'g\'ri format. Faqat chat ID yuboring.');
     }
-
-    if (!targetUser) {
-      return ctx.reply('❌ Foydalanuvchi topilmadi. Username yoki telefon raqamni tekshiring.');
+    pendingAddAdmin.delete(ctx.from.id);
+    const addedById = await addAdmin({ userId: fallbackUserId }, ctx.from.id);
+    if (!addedById) return ctx.reply('ℹ️ Bu foydalanuvchi allaqachon admin.');
+    if (targetUser) {
+      return ctx.reply(`✅ Admin qo'shildi: ${targetUser.userId} (@${targetUser.username || 'yo\'q'})`);
     }
-    if (!Number.isFinite(targetUser.userId)) {
-      return ctx.reply('❌ Telegram ID topilmadi. Foydalanuvchi botdan /start qilgan bo\'lishi kerak.');
-    }
-
-    const added = await addAdmin(targetUser, ctx.from.id);
-    if (!added) return ctx.reply('ℹ️ Bu foydalanuvchi allaqachon admin.');
-    return ctx.reply(`✅ Admin qo'shildi: ${targetUser.userId} (@${targetUser.username || 'yo\'q'})`);
+    return ctx.reply(`✅ Admin qo'shildi: ${fallbackUserId}`);
   });
 
   bot.command('addadmin', async (ctx) => {
@@ -112,40 +99,21 @@ function createAdminBot(token) {
 
     const parts = ctx.message.text.trim().split(/\s+/);
     if (parts.length < 2) {
-      return ctx.reply('ℹ️ Foydalanish: /addadmin 123456789 yoki /addadmin @username yoki /addadmin 939119572');
+      return ctx.reply('ℹ️ Foydalanish: /addadmin 123456789');
     }
 
     const raw = parts[1].trim();
-    let targetUser = null;
+    const { targetUser, fallbackUserId } = await resolveTargetUser(raw);
 
-    if (raw.startsWith('@')) {
-      const username = raw.slice(1).toLowerCase();
-      targetUser = await User.findOne({ username: new RegExp(`^${username}$`, 'i') });
-    } else if (/^\d+$/.test(raw)) {
-      if (raw.length >= 9) {
-        const phone = normalizePhoneInput(raw);
-        if (phone) {
-          targetUser = await User.findOne({ 'phones.phone': phone });
-        }
-      } else {
-        const userId = Number(raw);
-        targetUser = await User.findOne({ userId });
-      }
-    } else {
-      const username = raw.toLowerCase();
-      targetUser = await User.findOne({ username: new RegExp(`^${username}$`, 'i') });
+    if (!Number.isFinite(fallbackUserId)) {
+      return ctx.reply('❌ Noto\'g\'ri format. Faqat chat ID yuboring.');
     }
-
-    if (!targetUser) {
-      return ctx.reply('❌ Foydalanuvchi topilmadi. Username yoki telefon raqamni tekshiring.');
+    const addedById = await addAdmin({ userId: fallbackUserId }, ctx.from.id);
+    if (!addedById) return ctx.reply('ℹ️ Bu foydalanuvchi allaqachon admin.');
+    if (targetUser) {
+      return ctx.reply(`✅ Admin qo'shildi: ${targetUser.userId} (@${targetUser.username || 'yo\'q'})`);
     }
-    if (!Number.isFinite(targetUser.userId)) {
-      return ctx.reply('❌ Telegram ID topilmadi. Foydalanuvchi botdan /start qilgan bo\'lishi kerak.');
-    }
-
-    const added = await addAdmin(targetUser, ctx.from.id);
-    if (!added) return ctx.reply('ℹ️ Bu foydalanuvchi allaqachon admin.');
-    return ctx.reply(`✅ Admin qo'shildi: ${targetUser.userId} (@${targetUser.username || 'yo\'q'})`);
+    return ctx.reply(`✅ Admin qo'shildi: ${fallbackUserId}`);
   });
 
   // ADMIN callback queries
